@@ -1,0 +1,431 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Store Inventory System{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Page Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-tachometer-alt me-2"></i>Dashboard</h2>
+        <div>
+            <span class="text-muted">Last updated: <span id="currentTime"></span></span>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-primary shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                Total Products
+                            </div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ total_products }}</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-boxes fa-2x text-primary"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-success shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                Total Items in Stock
+                            </div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ total_quantity }}</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-warehouse fa-2x text-success"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-info shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                Active Assignments
+                            </div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ active_assignments }}</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-clipboard-list fa-2x text-info"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-xl-3 col-md-6 mb-4">
+            <div class="card border-left-warning shadow h-100 py-2">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                Low Stock Items
+                            </div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800">{{ low_stock_count }}</div>
+                        </div>
+                        <div class="col-auto">
+                            <i class="fas fa-exclamation-triangle fa-2x text-warning"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts and Tables Row -->
+    <div class="row">
+        <!-- Products by Category -->
+        <div class="col-xl-4 col-lg-5 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                    <h6 class="m-0 font-weight-bold text-primary">Products by Category</h6>
+                </div>
+                <div class="card-body">
+                    {% if products_by_category %}
+                        <div class="chart-pie pt-4 pb-2">
+                            <canvas id="categoryChart"></canvas>
+                        </div>
+                        <div class="mt-4 text-center small">
+                            {% for category, count in products_by_category %}
+                                <span class="mr-2">
+                                    <i class="fas fa-circle text-primary"></i> {{ category }}: {{ count }}
+                                </span>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted text-center">No products available</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Assignments -->
+        <div class="col-xl-8 col-lg-7 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+                    <h6 class="m-0 font-weight-bold text-primary">Recent Assignments</h6>
+                    <a href="{{ url_for('students') }}" class="btn btn-sm btn-primary">View All</a>
+                </div>
+                <div class="card-body">
+                    {% if recent_assignments %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Student</th>
+                                        <th>Product</th>
+                                        <th>Date</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for assignment in recent_assignments %}
+                                        <tr>
+                                            <td>
+                                                <i class="fas fa-user me-2"></i>
+                                                {{ assignment.student.full_name if assignment.student else 'N/A' }}
+                                                {% if assignment.student and assignment.student.roll_number %}
+                                                    <br><small class="text-muted">{{ assignment.student.roll_number }}</small>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                <i class="fas fa-box me-2"></i>
+                                                {{ assignment.product.name if assignment.product else 'N/A' }}
+                                                {% if assignment.product %}
+                                                    <br><small class="text-muted">{{ assignment.product.category }}</small>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                <i class="fas fa-calendar me-2"></i>
+                                                {{ assignment.assigned_date.strftime('%Y-%m-%d') if assignment.assigned_date else 'N/A' }}
+                                            </td>
+                                            <td>
+                                                {% if assignment.status == 'assigned' %}
+                                                    <span class="badge bg-success">Active</span>
+                                                {% else %}
+                                                    <span class="badge bg-secondary">Returned</span>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-muted text-center">No recent assignments</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Low Stock Alert -->
+    {% if low_stock_products %}
+    <div class="row">
+        <div class="col-12 mb-4">
+            <div class="card shadow border-left-warning">
+                <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between bg-warning text-white">
+                    <h6 class="m-0 font-weight-bold">
+                        <i class="fas fa-exclamation-triangle me-2"></i>Low Stock Alert
+                    </h6>
+                    <a href="{{ url_for('store') }}" class="btn btn-sm btn-light">Manage Inventory</a>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Product Name</th>
+                                    <th>Category</th>
+                                    <th>Current Stock</th>
+                                    <th>Min. Stock Level</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for product in low_stock_products %}
+                                    <tr>
+                                        <td>
+                                            <i class="fas fa-box me-2"></i>
+                                            {{ product.name }}
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-secondary">{{ product.category }}</span>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-danger">{{ product.quantity }}</span>
+                                        </td>
+                                        <td>{{ product.min_stock_level }}</td>
+                                        <td>
+                                            <a href="{{ url_for('store') }}" class="btn btn-sm btn-primary">
+                                                <i class="fas fa-plus me-1"></i>Restock
+                                            </a>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Student Product Assignments -->
+    <div class="row">
+        <div class="col-12 mb-4">
+            <div class="card shadow">
+                <div class="card-header py-3 d-flex flex-row align-items-center justify-content-between bg-info text-white">
+                    <h6 class="m-0 font-weight-bold">
+                        <i class="fas fa-users me-2"></i>Student Product Assignments
+                    </h6>
+                    <a href="{{ url_for('students') }}" class="btn btn-sm btn-light">Manage Students</a>
+                </div>
+                <div class="card-body">
+                    {% set active_students = [] %}
+                    {% for assignment in recent_assignments %}
+                        {% if assignment.status == 'assigned' and assignment.student %}
+                            {% if assignment.student not in active_students %}
+                                {% set _ = active_students.append(assignment.student) %}
+                            {% endif %}
+                        {% endif %}
+                    {% endfor %}
+                    
+                    {% if active_students|length > 0 %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Student Name</th>
+                                        <th>Roll Number</th>
+                                        <th>Department</th>
+                                        <th>Assigned Product</th>
+                                        <th>Assignment Date</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for assignment in recent_assignments %}
+                                        {% if assignment.status == 'assigned' %}
+                                        <tr>
+                                            <td>
+                                                <i class="fas fa-user-graduate me-2 text-primary"></i>
+                                                {{ assignment.student.full_name if assignment.student else 'N/A' }}
+                                            </td>
+                                            <td>{{ assignment.student.roll_number if assignment.student else 'N/A' }}</td>
+                                            <td>
+                                                <span class="badge bg-secondary">
+                                                    {{ assignment.student.department if assignment.student else 'N/A' }}
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <strong>{{ assignment.product.name if assignment.product else 'N/A' }}</strong>
+                                                {% if assignment.product %}
+                                                    <br><small class="text-muted">{{ assignment.product.category }}</small>
+                                                {% endif %}
+                                            </td>
+                                            <td>{{ assignment.assigned_date.strftime('%Y-%m-%d %H:%M') if assignment.assigned_date else 'N/A' }}</td>
+                                            <td>
+                                                <span class="badge bg-success">
+                                                    <i class="fas fa-check-circle me-1"></i>Active
+                                                </span>
+                                            </td>
+                                        </tr>
+                                        {% endif %}
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-muted text-center">
+                            <i class="fas fa-info-circle me-2"></i>No active product assignments. Assign products to students from the Students page.
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Quick Actions</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-3 mb-3">
+                            <a href="{{ url_for('store') }}" class="btn btn-primary btn-lg w-100">
+                                <i class="fas fa-warehouse fa-2x mb-2 d-block"></i>
+                                Manage Inventory
+                            </a>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <a href="{{ url_for('students') }}" class="btn btn-success btn-lg w-100">
+                                <i class="fas fa-users fa-2x mb-2 d-block"></i>
+                                Manage Students
+                            </a>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <a href="{{ url_for('reports') }}" class="btn btn-info btn-lg w-100">
+                                <i class="fas fa-chart-bar fa-2x mb-2 d-block"></i>
+                                View Reports
+                            </a>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <a href="{{ url_for('notifications') }}" class="btn btn-warning btn-lg w-100">
+                                <i class="fas fa-bell fa-2x mb-2 d-block"></i>
+                                Notifications
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .border-left-primary {
+        border-left: 0.25rem solid #4e73df !important;
+    }
+    .border-left-success {
+        border-left: 0.25rem solid #1cc88a !important;
+    }
+    .border-left-info {
+        border-left: 0.25rem solid #36b9cc !important;
+    }
+    .border-left-warning {
+        border-left: 0.25rem solid #f6c23e !important;
+    }
+    .text-xs {
+        font-size: 0.7rem;
+    }
+    .text-primary {
+        color: #4e73df !important;
+    }
+    .text-success {
+        color: #1cc88a !important;
+    }
+    .text-info {
+        color: #36b9cc !important;
+    }
+    .text-warning {
+        color: #f6c23e !important;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// Update current time
+document.addEventListener('DOMContentLoaded', function() {
+    var timeElement = document.getElementById('currentTime');
+    if (timeElement) {
+        var now = new Date();
+        var formatted = now.getFullYear() + '-' + 
+                       String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+                       String(now.getDate()).padStart(2, '0') + ' ' + 
+                       String(now.getHours()).padStart(2, '0') + ':' + 
+                       String(now.getMinutes()).padStart(2, '0');
+        timeElement.textContent = formatted;
+    }
+});
+
+// Category Chart
+{% if products_by_category %}
+var ctxElement = document.getElementById('categoryChart');
+if (ctxElement) {
+    var ctx = ctxElement.getContext('2d');
+    var categoryChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: [{% for category, count in products_by_category %}'{{ category }}'{% if not loop.last %}, {% endif %}{% endfor %}],
+            datasets: [{
+                data: [{% for category, count in products_by_category %}{{ count }}{% if not loop.last %}, {% endif %}{% endfor %}],
+                backgroundColor: ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b', '#858796'],
+                hoverBackgroundColor: ['#2e59d9', '#17a673', '#2c9faf', '#dda20a', '#be2617', '#60616f'],
+                hoverBorderColor: "rgba(234, 236, 244, 1)",
+            }],
+        },
+        options: {
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: "rgb(255,255,255)",
+                    bodyColor: "#858796",
+                    borderColor: '#dddfeb',
+                    borderWidth: 1,
+                    displayColors: false,
+                }
+            },
+            cutout: '80%',
+        },
+    });
+}
+{% endif %}
+</script>
+{% endblock %}

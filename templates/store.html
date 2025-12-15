@@ -1,0 +1,617 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-store me-2"></i>Store Management</h2>
+        <div class="btn-group">
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addItemModal">
+                <i class="fas fa-plus me-2"></i>Add New Item
+            </button>
+            {% if excel_support %}
+            <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#uploadExcelModal">
+                <i class="fas fa-file-excel me-2"></i>Upload Excel
+            </button>
+            <a href="{{ url_for('download_template') }}" class="btn btn-outline-primary">
+                <i class="fas fa-download me-2"></i>Download Template
+            </a>
+            {% else %}
+            <button class="btn btn-secondary" disabled title="Install pandas and openpyxl to enable Excel upload">
+                <i class="fas fa-file-excel me-2"></i>Upload Excel (Not Available)
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <!-- Inventory Summary Cards -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <h5 class="card-title">Total Items</h5>
+                    <h2 class="mb-0">{{ total_items }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-warning text-dark">
+                <div class="card-body">
+                    <h5 class="card-title">Low Stock Items</h5>
+                    <h2 class="mb-0">{{ low_stock_count }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <h5 class="card-title">Assigned Items</h5>
+                    <h2 class="mb-0">{{ assigned_items_count }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Inventory Table -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Current Inventory</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Item Name</th>
+                            <th>Category</th>
+                            <th>In Stock</th>
+                            <th>Min. Stock</th>
+                            <th>Status</th>
+                            <th>Last Updated</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for product in products %}
+                        <tr class="{% if product.is_low_stock %}table-warning{% endif %}">
+                            <td>{{ product.name }}</td>
+                            <td>{{ product.category }}</td>
+                            <td>{{ product.quantity }}</td>
+                            <td>{{ product.min_stock_level }}</td>
+                            <td>
+                                {% if product.is_low_stock %}
+                                    <span class="badge bg-warning">Low Stock</span>
+                                {% else %}
+                                    <span class="badge bg-success">In Stock</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ product.date_of_issue.strftime('%Y-%m-%d') if product.date_of_issue else 'N/A' }}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary edit-item" 
+                                        data-id="{{ product.id }}"
+                                        data-name="{{ product.name }}"
+                                        data-category="{{ product.category }}"
+                                        data-quantity="{{ product.quantity }}"
+                                        data-min-stock="{{ product.min_stock_level }}">
+                                    <i class="fas fa-edit"></i> Edit
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Item Modal -->
+<div class="modal fade" id="addItemModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="itemForm" method="POST">
+                {{ form.hidden_tag() }}
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalTitle">Add New Item</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control", required=True) }}
+                    </div>
+                    <div class="mb-3">
+                        {{ form.category.label(class="form-label") }}
+                        {{ form.category(class="form-select", required=True) }}
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.quantity.label(class="form-label") }}
+                                {{ form.quantity(class="form-control", type="number", min="0", required=True) }}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.min_stock_level.label(class="form-label") }}
+                                {{ form.min_stock_level(class="form-control", type="number", min="1", required=True) }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Excel Modal -->
+{% if excel_support %}
+<div class="modal fade" id="uploadExcelModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title">
+                    <i class="fas fa-file-excel me-2"></i>Upload Excel File
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Upload Step -->
+                <div id="uploadStep">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Instructions:</strong> Upload an Excel (.xlsx, .xls) or CSV file with product data. 
+                        Make sure your file has the following columns: <strong>Product Name, Category, Quantity, Min Stock Level</strong>. 
+                        Description is optional.
+                        <a href="{{ url_for('download_template') }}" class="alert-link">Download template</a>
+                    </div>
+                    
+                    <!-- Drag and Drop Area -->
+                    <div class="border rounded p-5 text-center" id="dropZone" style="border: 2px dashed #28a745 !important; background-color: #f8f9fa; cursor: pointer;">
+                        <i class="fas fa-cloud-upload-alt fa-3x text-success mb-3"></i>
+                        <h5>Drag & Drop your file here</h5>
+                        <p class="text-muted">or click to browse</p>
+                        <input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv" style="display: none;">
+                        <button type="button" class="btn btn-success" onclick="document.getElementById('excelFileInput').click()">
+                            <i class="fas fa-folder-open me-2"></i>Choose File
+                        </button>
+                    </div>
+                    
+                    <div id="fileInfo" class="mt-3" style="display: none;">
+                        <div class="alert alert-secondary">
+                            <i class="fas fa-file me-2"></i>
+                            <strong>Selected File:</strong> <span id="fileName"></span>
+                            <button type="button" class="btn btn-sm btn-outline-danger float-end" onclick="clearFile()">
+                                <i class="fas fa-times"></i> Remove
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Loading Spinner -->
+                    <div id="loadingSpinner" class="text-center mt-4" style="display: none;">
+                        <div class="spinner-border text-success" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Processing file...</p>
+                    </div>
+                </div>
+                
+                <!-- Preview Step -->
+                <div id="previewStep" style="display: none;">
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle me-2"></i>
+                        File processed successfully! Review the data below before importing.
+                    </div>
+                    
+                    <!-- Summary Stats -->
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <div class="card text-center">
+                                <div class="card-body">
+                                    <h3 id="totalRows" class="text-primary">0</h3>
+                                    <p class="mb-0">Total Rows</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card text-center">
+                                <div class="card-body">
+                                    <h3 id="validRows" class="text-success">0</h3>
+                                    <p class="mb-0">Valid Rows</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card text-center">
+                                <div class="card-body">
+                                    <h3 id="errorRows" class="text-danger">0</h3>
+                                    <p class="mb-0">Errors</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Errors Display -->
+                    <div id="errorsContainer" style="display: none;">
+                        <div class="alert alert-warning">
+                            <h6><i class="fas fa-exclamation-triangle me-2"></i>Validation Errors:</h6>
+                            <ul id="errorsList" class="mb-0"></ul>
+                        </div>
+                    </div>
+                    
+                    <!-- Data Preview Table -->
+                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-bordered table-hover">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>Row</th>
+                                    <th>Product Name</th>
+                                    <th>Category</th>
+                                    <th>Quantity</th>
+                                    <th>Min Stock</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody id="previewTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="uploadBtn" onclick="uploadFile()" style="display: none;">
+                    <i class="fas fa-upload me-2"></i>Upload & Parse
+                </button>
+                <button type="button" class="btn btn-primary" id="backBtn" onclick="backToUpload()" style="display: none;">
+                    <i class="fas fa-arrow-left me-2"></i>Back
+                </button>
+                <button type="button" class="btn btn-success" id="importBtn" onclick="importData()" style="display: none;">
+                    <i class="fas fa-check me-2"></i>Import Data
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Handle edit button clicks
+document.querySelectorAll('.edit-item').forEach(button => {
+    button.addEventListener('click', function() {
+        const modal = new bootstrap.Modal(document.getElementById('addItemModal'));
+        const form = document.getElementById('itemForm');
+        
+        // Set form action and method
+        form.action = `{{ url_for('update_product') }}`;
+        form.method = 'POST';
+        
+        // Set modal title
+        document.getElementById('modalTitle').textContent = 'Edit Item';
+        
+        // Fill form with item data
+        document.getElementById('name').value = this.dataset.name;
+        document.getElementById('category').value = this.dataset.category;
+        document.getElementById('quantity').value = this.dataset.quantity;
+        document.getElementById('min_stock_level').value = this.dataset.minStock;
+        
+        // Add hidden field for product ID
+        let idInput = document.createElement('input');
+        idInput.type = 'hidden';
+        idInput.name = 'product_id';
+        idInput.value = this.dataset.id;
+        form.appendChild(idInput);
+        
+        modal.show();
+    });
+});
+
+// Reset form when add button is clicked
+document.querySelector('[data-bs-target="#addItemModal"]').addEventListener('click', function() {
+    const form = document.getElementById('itemForm');
+    form.reset();
+    form.action = '{{ url_for("add_product") }}';
+    document.getElementById('modalTitle').textContent = 'Add New Item';
+    
+    // Remove any existing hidden ID field
+    const existingIdInput = document.querySelector('input[name="product_id"]');
+    if (existingIdInput) {
+        existingIdInput.remove();
+    }
+});
+
+// ==================== Excel Upload Functionality ====================
+{% if excel_support %}
+
+let selectedFile = null;
+let parsedData = null;
+
+// File input change handler
+const excelFileInput = document.getElementById('excelFileInput');
+if (excelFileInput) {
+    excelFileInput.addEventListener('change', function(e) {
+        handleFileSelect(e.target.files[0]);
+    });
+}
+
+// Drag and drop handlers
+const dropZone = document.getElementById('dropZone');
+
+if (dropZone) {
+    dropZone.addEventListener('click', function() {
+        document.getElementById('excelFileInput').click();
+    });
+
+    dropZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.style.borderColor = '#198754';
+        this.style.backgroundColor = '#d1e7dd';
+    });
+
+    dropZone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.style.borderColor = '#28a745';
+        this.style.backgroundColor = '#f8f9fa';
+    });
+
+    dropZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.style.borderColor = '#28a745';
+        this.style.backgroundColor = '#f8f9fa';
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFileSelect(files[0]);
+        }
+    });
+}
+
+function handleFileSelect(file) {
+    if (!file) return;
+    
+    // Validate file type
+    const validExtensions = ['.xlsx', '.xls', '.csv'];
+    const fileName = file.name.toLowerCase();
+    const isValid = validExtensions.some(ext => fileName.endsWith(ext));
+    
+    if (!isValid) {
+        showToast('Invalid file type. Please upload .xlsx, .xls, or .csv file', 'error');
+        return;
+    }
+    
+    selectedFile = file;
+    document.getElementById('fileName').textContent = file.name;
+    document.getElementById('fileInfo').style.display = 'block';
+    document.getElementById('uploadBtn').style.display = 'inline-block';
+}
+
+function clearFile() {
+    selectedFile = null;
+    document.getElementById('excelFileInput').value = '';
+    document.getElementById('fileInfo').style.display = 'none';
+    document.getElementById('uploadBtn').style.display = 'none';
+}
+
+async function uploadFile() {
+    if (!selectedFile) {
+        showToast('Please select a file first', 'error');
+        return;
+    }
+    
+    // Show loading spinner
+    document.getElementById('loadingSpinner').style.display = 'block';
+    document.getElementById('uploadBtn').disabled = true;
+    
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    
+    try {
+        const response = await fetch('{{ url_for("upload_excel") }}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}'
+            }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            parsedData = result.data;
+            showPreview(result);
+        } else {
+            showToast(result.message || 'Error processing file', 'error');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('An error occurred while uploading the file', 'error');
+    } finally {
+        document.getElementById('loadingSpinner').style.display = 'none';
+        document.getElementById('uploadBtn').disabled = false;
+    }
+}
+
+function showPreview(result) {
+    // Hide upload step, show preview step
+    document.getElementById('uploadStep').style.display = 'none';
+    document.getElementById('previewStep').style.display = 'block';
+    
+    // Update buttons
+    document.getElementById('uploadBtn').style.display = 'none';
+    document.getElementById('backBtn').style.display = 'inline-block';
+    document.getElementById('importBtn').style.display = 'inline-block';
+    
+    // Update summary stats
+    document.getElementById('totalRows').textContent = result.total_rows;
+    document.getElementById('validRows').textContent = result.valid_rows;
+    document.getElementById('errorRows').textContent = result.error_count;
+    
+    // Show errors if any
+    if (result.errors && result.errors.length > 0) {
+        document.getElementById('errorsContainer').style.display = 'block';
+        const errorsList = document.getElementById('errorsList');
+        errorsList.innerHTML = '';
+        result.errors.forEach(error => {
+            const li = document.createElement('li');
+            li.textContent = error;
+            errorsList.appendChild(li);
+        });
+    } else {
+        document.getElementById('errorsContainer').style.display = 'none';
+    }
+    
+    // Populate preview table
+    const tbody = document.getElementById('previewTableBody');
+    tbody.innerHTML = '';
+    
+    result.data.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${item.row_number}</td>
+            <td>${item.name}</td>
+            <td><span class="badge bg-primary">${item.category}</span></td>
+            <td>${item.quantity}</td>
+            <td>${item.min_stock_level}</td>
+            <td>${item.description || '-'}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function backToUpload() {
+    // Show upload step, hide preview step
+    document.getElementById('uploadStep').style.display = 'block';
+    document.getElementById('previewStep').style.display = 'none';
+    
+    // Update buttons
+    document.getElementById('uploadBtn').style.display = 'inline-block';
+    document.getElementById('backBtn').style.display = 'none';
+    document.getElementById('importBtn').style.display = 'none';
+}
+
+async function importData() {
+    if (!parsedData || parsedData.length === 0) {
+        showToast('No valid data to import', 'error');
+        return;
+    }
+    
+    // Disable import button
+    const importBtn = document.getElementById('importBtn');
+    importBtn.disabled = true;
+    importBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Importing...';
+    
+    try {
+        const response = await fetch('{{ url_for("import_excel_data") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token() }}'
+            },
+            body: JSON.stringify({ products: parsedData })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            
+            // Close modal and reload page after a short delay
+            setTimeout(() => {
+                bootstrap.Modal.getInstance(document.getElementById('uploadExcelModal')).hide();
+                location.reload();
+            }, 1500);
+        } else {
+            showToast(result.message || 'Error importing data', 'error');
+            importBtn.disabled = false;
+            importBtn.innerHTML = '<i class="fas fa-check me-2"></i>Import Data';
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showToast('An error occurred while importing data', 'error');
+        importBtn.disabled = false;
+        importBtn.innerHTML = '<i class="fas fa-check me-2"></i>Import Data';
+    }
+}
+
+// Reset modal when closed
+const uploadExcelModal = document.getElementById('uploadExcelModal');
+if (uploadExcelModal) {
+    uploadExcelModal.addEventListener('hidden.bs.modal', function() {
+        // Reset to upload step
+        document.getElementById('uploadStep').style.display = 'block';
+        document.getElementById('previewStep').style.display = 'none';
+        
+        // Reset buttons
+        document.getElementById('uploadBtn').style.display = 'none';
+        document.getElementById('backBtn').style.display = 'none';
+        document.getElementById('importBtn').style.display = 'none';
+        
+        // Clear file
+        clearFile();
+        parsedData = null;
+    });
+}
+
+// Toast notification function
+function showToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toastContainer') || createToastContainer();
+    
+    const toastId = 'toast-' + Date.now();
+    const bgClass = type === 'success' ? 'bg-success' : type === 'error' ? 'bg-danger' : 'bg-info';
+    
+    const toastHTML = `
+        <div id="${toastId}" class="toast align-items-center text-white ${bgClass} border-0" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body">
+                    ${message}
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    `;
+    
+    toastContainer.insertAdjacentHTML('beforeend', toastHTML);
+    
+    const toastElement = document.getElementById(toastId);
+    const toast = new bootstrap.Toast(toastElement, { delay: 3000 });
+    toast.show();
+    
+    // Remove toast element after it's hidden
+    toastElement.addEventListener('hidden.bs.toast', function() {
+        toastElement.remove();
+    });
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toastContainer';
+    container.className = 'toast-container position-fixed top-0 end-0 p-3';
+    container.style.zIndex = '9999';
+    document.body.appendChild(container);
+    return container;
+}
+
+{% endif %}
+// ==================== End Excel Upload Functionality ====================
+</script>
+{% endblock %}

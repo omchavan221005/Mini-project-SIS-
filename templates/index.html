@@ -73,8 +73,12 @@
         <div class="container-fluid">
             <span class="navbar-brand">📦 Store Inventory System</span>
             <div class="navbar-nav me-auto">
-                <a class="nav-link active" href="/"><i class="fas fa-home"></i> Inventory</a>
+                <a class="nav-link" href="/"><i class="fas fa-home"></i> Dashboard</a>
+                <a class="nav-link active" href="/store"><i class="fas fa-warehouse"></i> Store Management</a>
                 <a class="nav-link" href="/students"><i class="fas fa-users"></i> Students</a>
+                <a class="nav-link" href="/reports"><i class="fas fa-chart-bar"></i> Reports</a>
+                <a class="nav-link" href="/notifications"><i class="fas fa-bell"></i> Notifications</a>
+                <a class="nav-link" href="/settings"><i class="fas fa-cog"></i> Settings</a>
             </div>
             <a href="/logout" class="btn btn-outline-light">Logout</a>
         </div>
@@ -96,21 +100,39 @@
                         <div class="invalid-feedback">Please enter a product name.</div>
                     </div>
                     <div class="col-md-2">
+                        <label for="productCategory" class="form-label">Category</label>
+                        <select id="productCategory" name="category" class="form-control" required>
+                            <option value="">Select Category</option>
+                            <option value="Electronics">Electronics</option>
+                            <option value="Stationery">Stationery</option>
+                            <option value="Lab Equipment">Lab Equipment</option>
+                            <option value="Books">Books</option>
+                            <option value="Furniture">Furniture</option>
+                            <option value="General">General</option>
+                        </select>
+                        <div class="invalid-feedback">Please select a category.</div>
+                    </div>
+                    <div class="col-md-2">
                         <label for="productQuantity" class="form-label">Quantity</label>
                         <input type="number" id="productQuantity" name="quantity" class="form-control" placeholder="Enter quantity" min="1" required>
                         <div class="invalid-feedback">Please enter a valid quantity (minimum 1).</div>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="minStockLevel" class="form-label">Min Stock Alert</label>
+                        <input type="number" id="minStockLevel" name="min_stock_level" class="form-control" placeholder="Min level" min="1" value="5" required>
+                        <div class="invalid-feedback">Please enter minimum stock level.</div>
                     </div>
                     <div class="col-md-2">
                         <label for="productDate" class="form-label">Date of Issue</label>
                         <input type="date" id="productDate" name="date_of_issue" class="form-control" required>
                         <div class="invalid-feedback">Please select a date.</div>
                     </div>
-                    <div class="col-md-3">
-                        <label for="productReturnDate" class="form-label">Date of Return (Optional)</label>
+                    <div class="col-md-2">
+                        <label for="productReturnDate" class="form-label">Return Date (Optional)</label>
                         <input type="date" id="productReturnDate" name="date_of_return" class="form-control">
                         <div class="invalid-feedback">Please select a valid date.</div>
                     </div>
-                    <div class="col-md-2 d-flex align-items-end">
+                    <div class="col-md-1 d-flex align-items-end">
                         <button type="submit" class="btn btn-success w-100">
                             <i class="fas fa-plus me-1"></i>Add
                         </button>
@@ -123,12 +145,23 @@
         <div class="card fade-in">
             <div class="card-header bg-white">
                 <div class="row align-items-center">
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <h5 class="card-title mb-0">
                             <i class="fas fa-list me-2 text-primary"></i>Inventory List
                         </h5>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-md-4">
+                        <select id="categoryFilter" class="form-control">
+                            <option value="">All Categories</option>
+                            <option value="Electronics">Electronics</option>
+                            <option value="Stationery">Stationery</option>
+                            <option value="Lab Equipment">Lab Equipment</option>
+                            <option value="Books">Books</option>
+                            <option value="Furniture">Furniture</option>
+                            <option value="General">General</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
                         <div class="search-container">
                             <i class="fas fa-search search-icon"></i>
                             <input type="text" id="searchInput" class="form-control" placeholder="Search products...">
@@ -143,7 +176,9 @@
                             <tr>
                                 <th scope="col">ID</th>
                                 <th scope="col">Product Name</th>
+                                <th scope="col">Category</th>
                                 <th scope="col">Quantity</th>
+                                <th scope="col">Stock Status</th>
                                 <th scope="col">Date of Issue</th>
                                 <th scope="col">Date of Return</th>
                                 <th scope="col">Actions</th>
@@ -151,10 +186,18 @@
                         </thead>
                         <tbody id="tableBody">
                             {% for product in products %}
-                            <tr data-product-id="{{ product.id }}" class="fade-in">
+                            <tr data-product-id="{{ product.id }}" data-category="{{ product.category }}" class="fade-in{% if product.is_low_stock %} table-warning{% endif %}">
                                 <td>{{ product.id }}</td>
                                 <td class="product-name">{{ product.name }}</td>
+                                <td><span class="badge bg-secondary">{{ product.category }}</span></td>
                                 <td>{{ product.quantity }}</td>
+                                <td>
+                                    {% if product.is_low_stock %}
+                                        <span class="badge bg-warning text-dark"><i class="fas fa-exclamation-triangle"></i> Low Stock</span>
+                                    {% else %}
+                                        <span class="badge bg-success"><i class="fas fa-check"></i> In Stock</span>
+                                    {% endif %}
+                                </td>
                                 <td>{{ product.date_of_issue }}</td>
                                 <td>{{ product.date_of_return or 'Not returned' }}</td>
                                 <td>
@@ -305,17 +348,26 @@
         // Search functionality
         function setupSearchFunctionality() {
             const searchInput = document.getElementById('searchInput');
+            const categoryFilter = document.getElementById('categoryFilter');
+            
             searchInput.addEventListener('input', filterProducts);
+            categoryFilter.addEventListener('change', filterProducts);
         }
 
         function filterProducts() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const selectedCategory = document.getElementById('categoryFilter').value;
             const tableBody = document.getElementById('tableBody');
             const rows = tableBody.querySelectorAll('tr');
 
             rows.forEach(row => {
                 const productName = row.querySelector('.product-name').textContent.toLowerCase();
-                if (productName.includes(searchTerm)) {
+                const productCategory = row.dataset.category;
+                
+                const matchesSearch = productName.includes(searchTerm);
+                const matchesCategory = !selectedCategory || productCategory === selectedCategory;
+                
+                if (matchesSearch && matchesCategory) {
                     row.style.display = '';
                     row.classList.add('fade-in');
                 } else {

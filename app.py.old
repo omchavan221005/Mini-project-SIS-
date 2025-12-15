@@ -1,0 +1,734 @@
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, send_file, flash, abort
+from flask_sqlalchemy import SQLAlchemy
+from flask_wtf import FlaskForm
+from flask_wtf.csrf import CSRFProtect, generate_csrf
+from wtforms import StringField, PasswordField, SubmitField, IntegerField, SelectField, DateField, TextAreaField
+from wtforms.validators import DataRequired, NumberRange, Email, Optional, Length
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+from datetime import datetime, timedelta
+import json
+import csv
+import io
+import os
+import logging
+from logging.handlers import RotatingFileHandler
+from collections import Counter
+from models import Product, Student, ProductAssignment
+
+# Initialize Flask app
+app = Flask(__name__)
+
+# Configuration
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'dev-key-change-this-in-production'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL') or 'sqlite:///inventory.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
+
+# Ensure upload folder exists
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Initialize extensions
+db = SQLAlchemy(app)
+csrf = CSRFProtect(app)
+
+# Configure logging
+if not app.debug:
+    if not os.path.exists('logs'):
+        os.mkdir('logs')
+    file_handler = RotatingFileHandler('logs/inventory.log', maxBytes=10240, backupCount=10)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
+    file_handler.setLevel(logging.INFO)
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
+    app.logger.info('Inventory System Startup')
+db = SQLAlchemy(app)
+
+# Dummy login credentials
+USER = {"username": "admin", "password": "admin"}
+
+# Forms
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey('student.id'), nullable=False)
+    assigned_date = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    returned_date = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='assigned')  # 'assigned' or 'returned'
+    
+    # Relationships
+    product = db.relationship('Product', backref='assignments')
+    student = db.relationship('Student', backref='assigned_products')
+
+class Student(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    full_name = db.Column(db.String(100), nullable=False)
+    roll_number = db.Column(db.String(20), nullable=False, unique=True)
+    department = db.Column(db.String(10), nullable=False)
+    email = db.Column(db.String(120), nullable=True)
+    phone = db.Column(db.String(15), nullable=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id', ondelete='SET NULL'), nullable=True)
+    assignment_date = db.Column(db.Date, nullable=True)
+    return_date = db.Column(db.Date, nullable=True)
+    
+    # Relationship with Product (current assignment)
+    product = db.relationship('Product', backref='current_holder', foreign_keys=[product_id])
+    
+    # History of all products assigned to this student
+    @property
+    def product_history(self):
+        return ProductAssignment.query.filter_by(student_id=self.id).order_by(
+            ProductAssignment.assigned_date.desc()
+        ).all()
+
+# Authentication decorator
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            flash('Please log in to access this page.', 'warning')
+            return redirect(url_for('login', next=request.url))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            flash('Please log in to access this page.', 'warning')
+            return redirect(url_for('login', next=request.url))
+        user = User.query.get(session['user_id'])
+        if not user or not user.has_role('admin'):
+            flash('You do not have permission to access this page.', 'danger')
+            return redirect('/')
+        return f(*args, **kwargs)
+    return decorated_function
+
+class LoginForm(FlaskForm):
+    username = StringField('Username', validators=[DataRequired()])
+    password = PasswordField('Password', validators=[DataRequired()])
+    submit = SubmitField('Login')
+
+class ProductForm(FlaskForm):
+    name = StringField('Item Name', validators=[DataRequired()])
+    category = SelectField('Category', choices=[
+        ('Electronics', 'Electronics'),
+        ('Stationery', 'Stationery'),
+        ('Furniture', 'Furniture'),
+        ('Lab Equipment', 'Lab Equipment'),
+        ('Sports', 'Sports'),
+        ('Other', 'Other')
+    ], validators=[DataRequired()])
+    quantity = IntegerField('Quantity', validators=[
+        DataRequired(),
+        NumberRange(min=0, message='Quantity cannot be negative')
+    ])
+    min_stock_level = IntegerField('Minimum Stock Level', validators=[
+        DataRequired(),
+        NumberRange(min=1, message='Minimum stock level must be at least 1')
+    ])
+    date_of_issue = DateField('Date Added', default=datetime.utcnow)
+    submit = SubmitField('Save')
+
+# Login page
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if 'user_id' in session:
+        return redirect('/')  # Redirect to home page
+
+    form = LoginForm()
+    
+    if form.validate_on_submit():
+        username = form.username.data
+        password = form.password.data
+            
+        user = User.query.filter_by(username=username, is_active=True).first()
+        
+        if user and user.check_password(password):
+            session['user_id'] = user.id
+            session['username'] = user.username
+            session['role'] = user.role
+            
+            # Update last login
+            user.update_last_login()
+            
+            # Log the login
+            log_activity(user.id, 'login', f'User {user.username} logged in')
+            
+            next_page = request.args.get('next') or url_for('index')
+            flash('Login successful!', 'success')
+            return redirect(next_page)
+        else:
+            log_activity(None, 'failed_login', f'Failed login attempt for username: {username}')
+            flash('Invalid username or password', 'danger')
+    
+    return render_template("login.html", form=form)
+
+# Logout
+@app.route('/logout')
+@login_required
+def logout():
+    if 'user_id' in session:
+        log_activity(session['user_id'], 'logout', 'User logged out')
+    session.clear()
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('login'))
+
+def log_activity(user_id, action, details=None, ip_address=None):
+    """Helper function to log user activities"""
+    if not ip_address and request:
+        ip_address = request.remote_addr
+        
+    log = ActivityLog(
+        user_id=user_id,
+        action=action,
+        details=details,
+        ip_address=ip_address
+    )
+    db.session.add(log)
+    db.session.commit()
+    return log
+
+# Add product
+@app.route('/add', methods=['POST'])
+@login_required
+def add():
+    try:
+        # Get form data
+        name = request.form.get('name', '').strip()
+        quantity = request.form.get('quantity', '0').strip()
+        category = request.form.get('category', 'General').strip()
+        min_stock_level = request.form.get('min_stock_level', '5').strip()
+        date_of_issue_str = request.form.get('date_of_issue', '').strip()
+        
+        # Validate required fields
+        if not all([name, quantity, date_of_issue_str]):
+            flash('Name, quantity, and date of issue are required fields', 'danger')
+            return redirect(url_for('index'))
+            
+        try:
+            quantity = int(quantity)
+            min_stock_level = int(min_stock_level) if min_stock_level else 5
+            date_of_issue = datetime.strptime(date_of_issue_str, '%Y-%m-%d').date()
+            
+            if quantity < 0 or min_stock_level < 0:
+                raise ValueError("Quantity and minimum stock level must be non-negative")
+                
+        except ValueError as e:
+            flash(f'Invalid input: {str(e)}', 'danger')
+            return redirect(url_for('index'))
+        
+        # Handle optional return date
+        date_of_return = None
+        if request.form.get('date_of_return'):
+            try:
+                date_of_return = datetime.strptime(request.form['date_of_return'], '%Y-%m-%d').date()
+                if date_of_return < date_of_issue:
+                    flash('Return date cannot be before issue date', 'danger')
+                    return redirect(url_for('index'))
+            except ValueError:
+                flash('Invalid return date format', 'danger')
+                return redirect(url_for('index'))
+        
+        # Create and save the product
+        new_product = Product(
+            name=name,
+            quantity=quantity,
+            category=category,
+            min_stock_level=min_stock_level,
+            date_of_issue=date_of_issue,
+            date_of_return=date_of_return
+        )
+        
+        db.session.add(new_product)
+        db.session.commit()
+        
+        # Log the activity
+        log_activity(
+            session.get('user_id'),
+            'add_product',
+            f'Added product: {name} (ID: {new_product.id})',
+            request.remote_addr
+        )
+        
+        flash('Product added successfully!', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error adding product: {str(e)}")
+        flash('An error occurred while adding the product', 'danger')
+        
+    return redirect(url_for('index'))
+
+# Delete product
+@app.route('/delete/<int:id>')
+@login_required
+@admin_required
+def delete(id):
+    try:
+        product = Product.query.get_or_404(id)
+        
+        # Store product info for logging before deletion
+        product_info = f"{product.name} (ID: {product.id})"
+        
+        # Remove product assignment from students before deleting
+        students_affected = Student.query.filter_by(product_id=id).count()
+        Student.query.filter_by(product_id=id).update({Student.product_id: None})
+        
+        db.session.delete(product)
+        db.session.commit()
+        
+        # Log the activity
+        log_activity(
+            session.get('user_id'),
+            'delete_product',
+            f'Deleted product: {product_info}. Affected students: {students_affected}',
+            request.remote_addr
+        )
+        
+        flash('Product deleted successfully', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error deleting product {id}: {str(e)}")
+        flash('An error occurred while deleting the product', 'danger')
+    
+    return redirect(url_for('index'))
+
+# API: Assign product to student
+@app.route('/assign/<int:student_id>', methods=['POST'])
+@login_required
+def assign_product(student_id):
+    try:
+        # Get JSON data from request
+        data = request.get_json()
+        if not data or 'product_id' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Product ID is required'
+            }), 400
+            
+        product_id = data['product_id']
+        
+        # Get student and product
+        student = Student.query.get_or_404(student_id)
+        product = Product.query.get_or_404(product_id)
+        
+        # Check if student already has a product
+        if student.product_id:
+            return jsonify({
+                'success': False,
+                'message': 'Student already has a product assigned'
+            }), 400
+            
+        # Check if product is already assigned
+        if product.is_assigned:
+            return jsonify({
+                'success': False,
+                'message': 'Product is already assigned to another student'
+            }), 400
+            
+        # Create a unique copy of the product for the student
+        new_product = Product(
+            name=product.name,
+            quantity=1,  # Each student gets one item
+            category=product.category,
+            min_stock_level=product.min_stock_level,
+            date_of_issue=datetime.utcnow().date(),
+            date_of_return=None,
+            is_assigned=True
+        )
+        
+        db.session.add(new_product)
+        db.session.flush()  # Get the new product ID
+        
+        # Assign to student
+        student.product_id = new_product.id
+        student.assignment_date = datetime.utcnow().date()
+        student.return_date = None
+        
+        db.session.commit()
+        
+        # Log the activity
+        log_activity(
+            session.get('user_id'),
+            'assign_product',
+            f'Assigned product {product.name} (ID: {product.id}) to student {student.full_name}',
+            request.remote_addr
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Product assigned successfully',
+            'assignment_date': student.assignment_date.isoformat(),
+            'product': {
+                'id': new_product.id,
+                'name': new_product.name,
+                'category': new_product.category
+            }
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error assigning product: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': 'An error occurred while assigning the product'
+        }), 500
+
+# API: Delete student
+@app.route('/api/students/<int:student_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_student(student_id):
+    try:
+        student = Student.query.get_or_404(student_id)
+        
+        # Store student info for logging
+        student_info = f"{student.full_name} (ID: {student.id})"
+        
+        # Delete associated product if it exists
+        product_deleted = False
+        if student.product:
+            product_id = student.product.id
+            product_name = student.product.name
+            db.session.delete(student.product)
+            product_deleted = True
+        
+        # Delete the student
+        db.session.delete(student)
+        db.session.commit()
+        
+        # Log the activity
+        log_activity(
+            session.get('user_id'),
+            'delete_student',
+            f'Deleted student: {student_info}' + 
+            (f' and their assigned product {product_name} (ID: {product_id})' if product_deleted else ''),
+            request.remote_addr
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Student deleted successfully',
+            'product_deleted': product_deleted
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error deleting student {student_id}: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': 'An error occurred while deleting the student'
+        }), 500
+
+# Index (protected page) - Store Inventory
+@app.route('/')
+@login_required
+def index():
+    return redirect(url_for('store'))
+
+@app.route('/store')
+@login_required
+def store():
+    products = Product.query.all()
+    total_items = sum(p.quantity for p in products)
+    low_stock_count = len([p for p in products if p.is_low_stock])
+    assigned_items_count = len([p for p in products if p.is_assigned])
+    
+    return render_template(
+        "store.html",
+        products=products,
+        total_items=total_items,
+        low_stock_count=low_stock_count,
+        assigned_items_count=assigned_items_count,
+        form=ProductForm()
+    )
+
+@app.route('/add_product', methods=['POST'])
+@login_required
+def add_product():
+    form = ProductForm()
+    if form.validate_on_submit():
+        try:
+            product = Product(
+                name=form.name.data,
+                category=form.category.data,
+                quantity=form.quantity.data,
+                min_stock_level=form.min_stock_level.data,
+                date_of_issue=form.date_of_issue.data or datetime.utcnow().date(),
+                is_assigned=False
+            )
+            db.session.add(product)
+            db.session.commit()
+            flash('Item added successfully!', 'success')
+            log_activity(session['user_id'], 'add_product', f'Added product: {product.name}')
+        except Exception as e:
+            db.session.rollback()
+            flash('Error adding item. Please try again.', 'danger')
+            app.logger.error(f'Error adding product: {str(e)}')
+    else:
+        flash('Please fill in all required fields correctly.', 'warning')
+    
+    return redirect(url_for('store'))
+
+@app.route('/update_product', methods=['POST'])
+@login_required
+def update_product():
+    form = ProductForm()
+    if form.validate_on_submit():
+        try:
+            product_id = request.form.get('product_id')
+            if not product_id:
+                flash('Product ID is missing', 'danger')
+                return redirect(url_for('store'))
+                
+            product = Product.query.get_or_404(product_id)
+            old_quantity = product.quantity
+            
+            product.name = form.name.data
+            product.category = form.category.data
+            product.quantity = form.quantity.data
+            product.min_stock_level = form.min_stock_level.data
+            
+            db.session.commit()
+            
+            # Log quantity changes
+            if old_quantity != product.quantity:
+                log_activity(
+                    session['user_id'],
+                    'update_quantity',
+                    f'Updated quantity for {product.name} from {old_quantity} to {product.quantity}'
+                )
+            
+            flash('Item updated successfully!', 'success')
+            log_activity(session['user_id'], 'update_product', f'Updated product: {product.name}')
+        except Exception as e:
+            db.session.rollback()
+            flash('Error updating item. Please try again.', 'danger')
+            app.logger.error(f'Error updating product: {str(e)}')
+    else:
+        flash('Please fill in all required fields correctly.', 'warning')
+    
+    return redirect(url_for('store'))
+
+# Student Details page (protected page)
+@app.route('/students')
+@login_required
+def students():
+    students_list = Student.query.all()
+    # Only show unassigned products for new assignments
+    available_products = Product.query.filter_by(is_assigned=False).all()
+    return render_template("student_details.html", students=students_list, products=available_products)
+
+# Reports & Analytics Dashboard
+@app.route('/reports')
+@login_required
+def reports():
+    
+    # Get analytics data
+    total_products = Product.query.count()
+    total_students = Student.query.count()
+    assigned_products = Product.query.filter_by(is_assigned=True).count()
+    low_stock_products = Product.query.filter(Product.quantity <= Product.min_stock_level).count()
+    
+    # Category distribution
+    categories = db.session.query(Product.category, db.func.count(Product.id)).group_by(Product.category).all()
+    category_data = {cat: count for cat, count in categories}
+    
+    # Department distribution
+    departments = db.session.query(Student.department, db.func.count(Student.id)).group_by(Student.department).all()
+    department_data = {dept: count for dept, count in departments}
+    
+    # Recent activity (last 30 days)
+    thirty_days_ago = datetime.now().date() - timedelta(days=30)
+    recent_assignments = Student.query.filter(Student.assignment_date >= thirty_days_ago).count()
+    
+    return render_template('reports.html', 
+                         total_products=total_products,
+                         total_students=total_students,
+                         assigned_products=assigned_products,
+                         low_stock_products=low_stock_products,
+                         category_data=json.dumps(category_data),
+                         department_data=json.dumps(department_data),
+                         recent_assignments=recent_assignments)
+
+# API endpoint for chart data
+@app.route('/api/analytics')
+def analytics_api():
+    if 'user' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    # Stock levels over time (mock data for demo)
+    stock_trend = [
+        {'date': (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d'), 
+         'stock': max(50 - i * 2, 10)} for i in range(30, 0, -1)
+    ]
+    
+    # Low stock alerts
+    low_stock_items = Product.query.filter(Product.quantity <= Product.min_stock_level).all()
+    alerts = [{'name': p.name, 'quantity': p.quantity, 'min_level': p.min_stock_level} 
+              for p in low_stock_items]
+    
+    return jsonify({
+        'stock_trend': stock_trend,
+        'low_stock_alerts': alerts
+    })
+
+# Export data to CSV
+@app.route('/export/<data_type>')
+def export_data(data_type):
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    if data_type == 'products':
+        writer.writerow(['ID', 'Name', 'Category', 'Quantity', 'Min Stock Level', 'Date of Issue', 'Is Assigned'])
+        products = Product.query.all()
+        for product in products:
+            writer.writerow([product.id, product.name, product.category, product.quantity, 
+                           product.min_stock_level, product.date_of_issue, product.is_assigned])
+        filename = 'products_export.csv'
+    
+    elif data_type == 'students':
+        writer.writerow(['ID', 'Full Name', 'Roll Number', 'Department', 'Email', 'Phone', 'Assigned Product', 'Assignment Date'])
+        students = Student.query.all()
+        for student in students:
+            product_name = student.product.name if student.product else 'None'
+            writer.writerow([student.id, student.full_name, student.roll_number, student.department,
+                           student.email or '', student.phone or '', product_name, student.assignment_date])
+        filename = 'students_export.csv'
+    
+    else:
+        return 'Invalid data type', 400
+    
+    output.seek(0)
+    return send_file(io.BytesIO(output.getvalue().encode('utf-8')), 
+                     mimetype='text/csv',
+                     as_attachment=True, 
+                     download_name=filename)
+
+# Notifications page
+@app.route('/notifications')
+def notifications():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+    
+    # Create notifications for low stock items
+    low_stock_products = Product.query.filter(Product.quantity <= Product.min_stock_level).all()
+    notifications_list = []
+    
+    for product in low_stock_products:
+        notifications_list.append({
+            'title': 'Low Stock Alert',
+            'message': f'{product.name} is running low (Only {product.quantity} left)',
+            'type': 'warning',
+            'created_at': datetime.now()
+        })
+    
+    # Add overdue returns notification
+    overdue_students = Student.query.filter(
+        Student.assignment_date < datetime.now().date() - timedelta(days=30),
+        Student.return_date.is_(None)
+    ).all()
+    
+    for student in overdue_students:
+        if student.product:
+            notifications_list.append({
+                'title': 'Overdue Return',
+                'message': f'{student.full_name} has not returned {student.product.name} (Due: {student.assignment_date + timedelta(days=30)})',
+                'type': 'error',
+                'created_at': datetime.now()
+            })
+    
+    return render_template('notifications.html', notifications=notifications_list)
+
+# Settings page
+@app.route('/settings')
+def settings():
+    return render_template('settings.html')
+
+# API: Return product from student
+@app.route('/api/students/<int:student_id>/return-product', methods=['POST'])
+@login_required
+def return_product(student_id):
+    try:
+        # Get student and check if they have a product
+        student = Student.query.get_or_404(student_id)
+        
+        if not student.product_id:
+            return jsonify({
+                'success': False,
+                'message': 'No product assigned to this student'
+            }), 400
+        
+        # Get the product
+        product = Product.query.get(student.product_id)
+        if not product:
+            return jsonify({
+                'success': False,
+                'message': 'Assigned product not found'
+            }), 404
+        
+        # Store product info for logging
+        product_id = product.id
+        product_name = product.name
+        
+        # Update student and product
+        student.product_id = None
+        student.assignment_date = None
+        student.return_date = datetime.utcnow().date()
+        
+        # Mark product as returned (but keep it in the system)
+        product.is_assigned = False
+        product.date_of_return = datetime.utcnow().date()
+        
+        db.session.commit()
+        
+        # Log the activity
+        log_activity(
+            session.get('user_id'),
+            'return_product',
+            f'Returned product {product_name} (ID: {product_id}) from student {student.full_name}',
+            request.remote_addr
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Product returned successfully',
+            'return_date': student.return_date.isoformat(),
+            'product': {
+                'id': product_id,
+                'name': product_name
+            }
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error returning product: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': 'An error occurred while returning the product'
+        }), 500
+
+def init_default_user():
+    """Initialize a default admin user if none exists"""
+    if not User.query.filter_by(username='admin').first():
+        admin_user = User(
+            username='admin',
+            role='admin',
+            email='admin@sis.com',
+            is_active=True
+        )
+        admin_user.set_password('admin')  # In production, use a strong password
+        db.session.add(admin_user)
+        db.session.commit()
+
+if __name__ == "__main__":
+    with app.app_context():
+        db.create_all()
+        init_default_user()
+    app.run(debug=True)
