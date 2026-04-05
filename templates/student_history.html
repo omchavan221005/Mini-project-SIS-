@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Trail | {{ student.full_name }}{% endblock %}
+
+{% block header_title %}Student Audit Trail{% endblock %}
+
+{% block content %}
+<!-- Back Action -->
+<div class="mb-4">
+    <a href="{{ url_for('students') }}" class="inline-flex items-center gap-2 text-sm font-bold text-slate-400 hover:text-indigo-600 transition-colors">
+        <i class="fas fa-arrow-left"></i> Return to Registry
+    </a>
+</div>
+
+<!-- Profile Context Header -->
+<div class="card-modern bg-indigo-900 overflow-hidden relative border-none">
+    <div class="absolute inset-0 opacity-10 pointer-events-none">
+        <div class="absolute -top-24 -left-24 w-96 h-96 bg-indigo-400 rounded-full blur-[100px]"></div>
+        <div class="absolute -bottom-24 -right-24 w-96 h-96 bg-purple-400 rounded-full blur-[100px]"></div>
+    </div>
+    
+    <div class="relative p-10 flex flex-col md:flex-row items-center gap-8">
+        <div class="w-32 h-32 rounded-3xl bg-white/10 backdrop-blur-xl border border-white/20 flex items-center justify-center text-white text-4xl font-black shadow-2xl">
+            {{ student.full_name[0] }}
+        </div>
+        <div class="flex-1 text-center md:text-left space-y-2">
+            <h2 class="text-4xl font-black text-white tracking-tight">{{ student.full_name }}</h2>
+            <div class="flex flex-wrap items-center justify-center md:justify-start gap-x-6 gap-y-2 text-indigo-200">
+                <span class="flex items-center gap-2 text-sm font-bold uppercase tracking-widest"><i class="fas fa-id-badge text-indigo-400"></i> {{ student.roll_number }}</span>
+                <span class="flex items-center gap-2 text-sm font-bold uppercase tracking-widest"><i class="fas fa-building text-indigo-400"></i> {{ student.department }}</span>
+                <span class="flex items-center gap-2 text-sm font-bold uppercase tracking-widest"><i class="fas fa-envelope text-indigo-400"></i> {{ student.email or 'No Email' }}</span>
+            </div>
+        </div>
+        <div class="bg-white/5 backdrop-blur-md rounded-3xl p-6 border border-white/10 text-center min-w-[160px]">
+            <p class="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-1">Active Loans</p>
+            <h4 class="text-3xl font-black text-white">{{ assignments|selectattr('status', 'equalto', 'assigned')|list|length }}</h4>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+    <!-- Allocation Form -->
+    <div class="card-modern">
+        <div class="p-8 border-b border-slate-100">
+            <h4 class="text-lg font-black text-slate-800">New Allocation</h4>
+        </div>
+        <div class="p-8">
+            <form action="{{ url_for('assign_product', student_id=student.id) }}" method="POST" class="space-y-6">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 italic">Select Resource</label>
+                    <select name="productId" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 outline-none font-bold text-slate-800" required>
+                        <option value="">Choose item...</option>
+                        {% for product in products %}
+                        <option value="{{ product.id }}">{{ product.name }} ({{ product.quantity }} avail.)</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 italic">Allocation Count</label>
+                    <input type="number" name="quantity" value="1" min="1" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 outline-none font-bold text-slate-800" required>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 italic">Return Deadline (Due Date)</label>
+                    <input type="date" name="dueDate" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-3 outline-none font-bold text-slate-800" required>
+                </div>
+                <button type="submit" class="w-full btn-primary-modern py-4 bg-indigo-600 hover:bg-indigo-700">Initialize Link</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- History Log -->
+    <div class="lg:col-span-2 card-modern overflow-hidden">
+        <div class="p-8 border-b border-slate-100 bg-white sticky top-0 z-10 flex items-center justify-between">
+            <h4 class="text-lg font-black text-slate-800">Activity Log</h4>
+            <div class="flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                <i class="fas fa-history"></i> Full Archive
+            </div>
+        </div>
+        
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead class="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                        <th class="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-wider">Resource Matrix</th>
+                        <th class="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-wider">Metrics</th>
+                        <th class="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-wider">Lifecycle</th>
+                        <th class="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% if assignments %}
+                        {% for assignment in assignments %}
+                        <tr class="hover:bg-slate-50/50 transition-colors">
+                            <td class="px-8 py-6">
+                                <p class="text-sm font-black text-slate-800">{{ assignment.product.name }}</p>
+                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{{ assignment.product.category }}</p>
+                            </td>
+                            <td class="px-8 py-6 text-center">
+                                <div class="inline-block px-3 py-1 bg-slate-100 rounded-lg">
+                                    <span class="text-sm font-black text-slate-700">{{ assignment.quantity }}</span>
+                                    <span class="text-[9px] font-bold text-slate-400 uppercase block leading-none pb-0.5">Units</span>
+                                </div>
+                            </td>
+                            <td class="px-8 py-6">
+                                <div class="space-y-1">
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-1.5 h-1.5 rounded-full {% if assignment.status == 'assigned' %}bg-amber-500 animate-pulse{% else %}bg-slate-300{% endif %}"></div>
+                                        <p class="text-xs font-bold text-slate-600">Issued: {{ assignment.assigned_date.strftime('%d %b, %H:%M') }}</p>
+                                    </div>
+                                    {% if assignment.status == 'returned' %}
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                                        <p class="text-xs font-bold text-emerald-600">Closed: {{ assignment.returned_date.strftime('%d %b, %H:%M') if assignment.returned_date else 'N/A' }}</p>
+                                    </div>
+                                    {% else %}
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-1.5 h-1.5 rounded-full bg-rose-400"></div>
+                                        <p class="text-xs font-bold text-rose-500 italic">Deadline: {{ assignment.due_date.strftime('%d %b, %Y') if assignment.due_date else 'No Limit' }}</p>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td class="px-8 py-6 text-right">
+                                {% if assignment.status == 'assigned' %}
+                                <form action="{{ url_for('return_product', student_id=student.id) }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="productId" value="{{ assignment.product_id }}">
+                                    <button type="submit" class="w-24 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-xl font-bold text-xs hover:bg-emerald-600 hover:text-white transition-all shadow-sm">
+                                        End Loan
+                                    </button>
+                                </form>
+                                {% else %}
+                                <span class="px-4 py-2 bg-slate-100 text-slate-400 rounded-xl font-bold text-xs block text-center w-24 ml-auto">Archived</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                    <tr>
+                        <td colspan="4" class="px-8 py-20 text-center">
+                            <div class="max-w-xs mx-auto space-y-4">
+                                <div class="w-16 h-16 bg-slate-50 rounded-3xl flex items-center justify-center text-slate-200 mx-auto border border-slate-100">
+                                    <i class="fas fa-folder-open text-3xl"></i>
+                                </div>
+                                <div>
+                                    <p class="text-sm font-bold text-slate-500">No Transaction History</p>
+                                    <p class="text-xs text-slate-400 mt-1">Initialize a new allocation to begin tracking this identity's interactions.</p>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,135 +1,81 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notifications - Store Inventory System</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        .navbar {
-            background: rgba(0, 0, 0, 0.8) !important;
-            backdrop-filter: blur(20px);
-        }
-        
-        .card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(20px);
-            border: none;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-            margin-bottom: 1rem;
-            transition: transform 0.3s ease;
-        }
-        
-        .card:hover {
-            transform: translateY(-2px);
-        }
-        
-        .notification-item {
-            border-left: 4px solid;
-            padding: 1rem;
-        }
-        
-        .notification-warning {
-            border-left-color: #ffc107;
-            background: rgba(255, 193, 7, 0.1);
-        }
-        
-        .notification-error {
-            border-left-color: #dc3545;
-            background: rgba(220, 53, 69, 0.1);
-        }
-        
-        .notification-info {
-            border-left-color: #17a2b8;
-            background: rgba(23, 162, 184, 0.1);
-        }
-        
-        .notification-success {
-            border-left-color: #28a745;
-            background: rgba(40, 167, 69, 0.1);
-        }
-        
-        .notification-icon {
-            font-size: 1.5rem;
-            margin-right: 1rem;
-        }
-        
-        .notification-time {
-            color: #6c757d;
-            font-size: 0.9rem;
-        }
-    </style>
-</head>
-<body>
-    <!-- Navigation -->
-    <nav class="navbar navbar-expand-lg navbar-dark">
-        <div class="container">
-            <a class="navbar-brand" href="/">🔔 Notifications</a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="/"><i class="fas fa-home"></i> Inventory</a>
-                <a class="nav-link" href="/students"><i class="fas fa-users"></i> Students</a>
-                <a class="nav-link" href="/reports"><i class="fas fa-chart-bar"></i> Reports</a>
-                <a class="nav-link active" href="/notifications"><i class="fas fa-bell"></i> Notifications</a>
-                <a class="nav-link" href="/settings"><i class="fas fa-cog"></i> Settings</a>
-                <a class="nav-link" href="/logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+{% extends "base.html" %}
+
+{% block title %}Intelligence | SIS Core{% endblock %}
+
+{% block header_title %}System Intelligence Feed{% endblock %}
+
+{% block content %}
+<div class="flex flex-col md:flex-row md:items-center justify-between mb-8 pb-6 border-b border-slate-200 gap-4">
+    <div>
+        <h3 class="text-2xl font-black text-slate-800">Operational Alerts</h3>
+        <p class="text-sm text-slate-400 font-medium">Real-time monitoring of stock levels and loan contracts.</p>
+    </div>
+    
+    <a href="{{ url_for('send_overdue_reminders') }}" 
+       onclick="return confirm('Immediate SMS Dispatch: Contact all overdue entities?')"
+       class="flex items-center gap-2 px-6 py-3 bg-rose-600 text-white font-bold rounded-2xl hover:bg-rose-700 transition-all shadow-lg shadow-rose-200">
+        <i class="fas fa-paper-plane text-sm"></i> DISPATCH REMINDERS
+    </a>
+</div>
+
+<div class="max-w-4xl mx-auto space-y-6">
+    {% if notifications %}
+        {% for notification in notifications %}
+        <div class="card-modern group hover:border-indigo-200 transition-all">
+            <div class="flex gap-6 p-6">
+                <!-- Status Icon -->
+                <div class="shrink-0">
+                    {% if notification.type == 'warning' %}
+                    <div class="w-14 h-14 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center border border-amber-100">
+                        <i class="fas fa-exclamation-triangle text-xl"></i>
+                    </div>
+                    {% elif notification.type == 'error' %}
+                    <div class="w-14 h-14 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center border border-rose-100">
+                        <i class="fas fa-biohazard text-xl"></i>
+                    </div>
+                    {% elif notification.type == 'success' %}
+                    <div class="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-500 flex items-center justify-center border border-emerald-100">
+                        <i class="fas fa-check-circle text-xl"></i>
+                    </div>
+                    {% else %}
+                    <div class="w-14 h-14 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center border border-indigo-100">
+                        <i class="fas fa-info-circle text-xl"></i>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Message Content -->
+                <div class="flex-1 space-y-1">
+                    <div class="flex items-center justify-between">
+                        <h5 class="text-base font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{{ notification.title }}</h5>
+                        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">
+                            {{ notification.type }}
+                        </span>
+                    </div>
+                    <p class="text-sm text-slate-600 leading-relaxed font-medium">{{ notification.message }}</p>
+                    
+                    <div class="pt-3 flex items-center gap-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        <span class="flex items-center gap-1.5"><i class="far fa-clock"></i> {{ notification.created_at.strftime('%d %b %Y, %H:%M') }}</span>
+                        <span class="w-1 h-1 bg-slate-200 rounded-full"></span>
+                        <span class="flex items-center gap-1.5"><i class="fas fa-fingerprint"></i> EV-{{ loop.index + 1000 }}</span>
+                    </div>
+                </div>
             </div>
         </div>
-    </nav>
-
-    <div class="container mt-4">
-        <div class="row">
-            <div class="col-12">
-                <h2 class="text-white mb-4">
-                    <i class="fas fa-bell me-2"></i>System Notifications
-                </h2>
-                
-                {% if notifications %}
-                    {% for notification in notifications %}
-                    <div class="card notification-item notification-{{ notification.type }}">
-                        <div class="d-flex align-items-start">
-                            <div class="notification-icon text-{{ notification.type == 'error' and 'danger' or notification.type }}">
-                                {% if notification.type == 'warning' %}
-                                    <i class="fas fa-exclamation-triangle"></i>
-                                {% elif notification.type == 'error' %}
-                                    <i class="fas fa-exclamation-circle"></i>
-                                {% elif notification.type == 'success' %}
-                                    <i class="fas fa-check-circle"></i>
-                                {% else %}
-                                    <i class="fas fa-info-circle"></i>
-                                {% endif %}
-                            </div>
-                            <div class="flex-grow-1">
-                                <h6 class="mb-1">{{ notification.title }}</h6>
-                                <p class="mb-1">{{ notification.message }}</p>
-                                <small class="notification-time">
-                                    <i class="fas fa-clock me-1"></i>
-                                    {{ notification.created_at.strftime('%Y-%m-%d %H:%M') }}
-                                </small>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="card">
-                        <div class="card-body text-center py-5">
-                            <i class="fas fa-bell-slash fa-3x text-muted mb-3"></i>
-                            <h5 class="text-muted">No notifications</h5>
-                            <p class="text-muted">You're all caught up! No new notifications at this time.</p>
-                        </div>
-                    </div>
-                {% endif %}
+        {% endfor %}
+    {% else %}
+    <div class="card-modern py-20 text-center border-dashed border-2 bg-slate-50 border-slate-200 shadow-none">
+        <div class="max-w-sm mx-auto space-y-6">
+            <div class="w-20 h-20 bg-white rounded-[2rem] shadow-xl flex items-center justify-center text-slate-200 mx-auto transform rotate-12">
+                <i class="fas fa-bell-slash text-4xl"></i>
             </div>
+            <div>
+                <h4 class="text-xl font-black text-slate-800">Clear Horizon</h4>
+                <p class="text-sm text-slate-400 mt-2">All system parameters are within normal ranges. No pending intelligence alerts found.</p>
+            </div>
+            <a href="{{ url_for('index') }}" class="btn-secondary-modern inline-block px-8">Refresh Dashboard</a>
         </div>
     </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.min.js"></script>
-</body>
-</html>
+    {% endif %}
+</div>
+{% endblock %}

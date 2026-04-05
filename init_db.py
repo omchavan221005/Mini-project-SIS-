@@ -1,5 +1,6 @@
 from app import app, db, User, Product, Student, ProductAssignment, ActivityLog
 from datetime import datetime, timedelta
+import os
 
 def init_db():
     with app.app_context():
@@ -9,15 +10,16 @@ def init_db():
         # Create admin user if not exists
         admin = User.query.filter_by(username='admin').first()
         if not admin:
+            admin_password = os.environ.get('ADMIN_PASSWORD') or 'admin123'
             admin = User(
                 username='admin',
                 is_admin=True,
                 created_at=datetime.utcnow()
             )
-            admin.set_password('admin123')  # Change this in production!
+            admin.set_password(admin_password)
             db.session.add(admin)
             db.session.commit()
-            print('Created admin user with username: admin, password: admin123')
+            print(f'Created admin user with username: admin')
         
         # Create some sample data for testing
         if Product.query.count() == 0:

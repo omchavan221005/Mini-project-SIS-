@@ -11,6 +11,9 @@ import json
 import csv
 import io
 import os
+from twilio.rest import Client
+from flask_mail import Mail, Message
+from dotenv import load_dotenv
 import logging
 from logging.handlers import RotatingFileHandler
 from collections import Counter
@@ -26,10 +29,14 @@ except ImportError:
 
 # Initialize Flask app
 app = Flask(__name__)
+load_dotenv()
 
 # Configuration
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'dev-key-change-this-in-production'
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL') or 'sqlite:///inventory.db'
+database_url = os.environ.get('DATABASE_URL')
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///inventory.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
@@ -41,6 +48,55 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Initialize extensions
 db = SQLAlchemy(app)
 csrf = CSRFProtect(app)
+
+# Email/SMS configuration
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER')
+
+mail = Mail(app)
+
+# Helper function to send SMS
+def send_sms(to_number, message_body):
+    """Utility to send SMS via Twilio"""
+    if not os.environ.get('TWILIO_ACCOUNT_SID'):
+        app.logger.warning('Twilio credentials not found. SMS not sent.')
+        return False
+        
+    try:
+        # Format phone number for Twilio (ensure it starts with +)
+        if to_number and not to_number.startswith('+'):
+            # Default to India (+91) if not provided, or you can change this
+            to_number = '+91' + to_number.strip().lstrip('0')
+            
+        client = Client(
+            os.environ.get('TWILIO_ACCOUNT_SID'),
+            os.environ.get('TWILIO_AUTH_TOKEN')
+        )
+        
+        message = client.messages.create(
+            from_=os.environ.get('TWILIO_PHONE_NUMBER'),
+            body=message_body,
+            to=to_number
+        )
+        app.logger.info(f'SMS sent successfully to {to_number}: {message.sid}')
+        return True
+    except Exception as e:
+        app.logger.error(f'Failed to send SMS to {to_number}: {str(e)}')
+        return False
+
+def send_email(subject, recipient, body):
+    try:
+        if not app.config['MAIL_USERNAME']: return False
+        msg = Message(subject, recipients=[recipient], body=body)
+        mail.send(msg)
+        return True
+    except Exception as e:
+        app.logger.error(f"Email Error: {str(e)}")
+    return False
 
 # Configure logging
 if not app.debug:
@@ -108,8 +164,10 @@ class ProductAssignment(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
     student_id = db.Column(db.Integer, db.ForeignKey('students.id'), nullable=False)
     assigned_date = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    due_date = db.Column(db.DateTime, nullable=True)
     returned_date = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(20), nullable=False, default='assigned')
+    quantity = db.Column(db.Integer, nullable=False, default=1)
     notes = db.Column(db.Text, nullable=True)
     
     # Relationships
@@ -251,20 +309,30 @@ def login():
         username = form.username.data
         password = form.password.data
         
-        # Dummy authentication - replace with real user authentication
-        if username == 'admin' and password == 'admin':
-            session['user_id'] = 1
-            session['username'] = username
-            session['is_admin'] = True
+        # 1. Look for user in database
+        user = User.query.filter_by(username=username).first()
+        
+        # 2. Verify existence and match password hash
+        if user and user.check_password(password):
+            # 3. Establish session state
+            session['user_id'] = user.id
+            session['username'] = user.username
+            session['is_admin'] = user.is_admin
             session.permanent = True
             
-            log_activity(1, 'login', f'User {username} logged in')
-            flash('Logged in successfully!', 'success')
+            # 4. Update last login timestamp
+            user.last_login = datetime.utcnow()
+            db.session.commit()
+            
+            log_activity(user.id, 'login', f'User {username} authenticated successfully')
+            flash(f'Welcome back, {username}! Authorization granted.', 'success')
             
             next_page = request.args.get('next')
             return redirect(next_page or url_for('index'))
         else:
-            flash('Invalid username or password', 'danger')
+            # 5. Handle authentication failure
+            log_activity(0, 'auth_fail', f'Failed login attempt for user: {username}')
+            flash('Authentication error: Invalid access key or user identity.', 'danger')
     
     return render_template('login.html', form=form)
 
@@ -417,10 +485,10 @@ def add_student():
         full_name = request.form.get('fullName')
         roll_number = request.form.get('rollNumber')
         department = request.form.get('department')
-        email = request.form.get('email')
-        phone = request.form.get('phone')
+        email = request.form.get('email', '').strip() or None
+        phone = request.form.get('phone', '').strip() or None
         
-        app.logger.info(f'Parsed data - Name: {full_name}, Roll: {roll_number}, Dept: {department}')
+        app.logger.info(f'Parsed data - Name: {full_name}, Roll: {roll_number}, Dept: {department}, Email: {email}')
         
         # Validate required fields
         if not full_name or not roll_number or not department:
@@ -453,6 +521,42 @@ def add_student():
     
     return redirect(url_for('students'))
 
+@app.route('/delete_student/<int:student_id>', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def delete_student(student_id):
+    try:
+        student = Student.query.get_or_404(student_id)
+        
+        # Check if student has active assignments
+        active_assignments = ProductAssignment.query.filter_by(
+            student_id=student.id,
+            status='assigned'
+        ).count()
+        
+        if active_assignments > 0:
+            flash(f'Cannot delete student {student.full_name} because they have {active_assignments} active product assignment(s). Please return all products first.', 'danger')
+            return redirect(url_for('students'))
+            
+        student_name = student.full_name
+        
+        # Delete related assignment history (since student_id is not nullable)
+        # Using a more direct delete approach to ensure database integrity
+        ProductAssignment.query.filter_by(student_id=student.id).delete()
+        
+        db.session.delete(student)
+        db.session.commit()
+        
+        log_activity(session.get('user_id', 0), 'delete_student', f'Deleted student record for {student_name}')
+        flash(f'Student {student_name} has been successfully purged from the registry.', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error deleting student: {str(e)}")
+        flash('An internal error occurred while trying to purge the record.', 'danger')
+        
+    return redirect(url_for('students'))
+
 @app.route('/assign_product/<int:student_id>', methods=['POST'])
 @login_required
 @csrf.exempt  # Temporarily exempt to test
@@ -466,10 +570,12 @@ def assign_product(student_id):
         if request.is_json:
             data = request.get_json()
             product_id = data.get('product_id')
+            assign_quantity = int(data.get('quantity', 1))
         else:
             product_id = request.form.get('productId')
+            assign_quantity = int(request.form.get('quantity', 1))
         
-        app.logger.info(f'Product ID: {product_id}')
+        app.logger.info(f'Assign product called for student_id: {student_id}, Product: {product_id}, Quantity: {assign_quantity}')
         
         if not product_id:
             if request.is_json:
@@ -496,39 +602,60 @@ def assign_product(student_id):
                 return redirect(url_for('students'))
             
         # Check if product is in stock
-        if product.quantity <= 0:
+        if product.quantity < assign_quantity:
+            message = f'Sorry, only {product.quantity} units of {product.name} are available.'
             if request.is_json:
-                return jsonify({
-                    'success': False,
-                    'message': f'Sorry, {product.name} is out of stock.'
-                }), 400
+                return jsonify({'success': False, 'message': message}), 400
             else:
-                flash(f'Sorry, {product.name} is out of stock.', 'danger')
+                flash(message, 'danger')
                 return redirect(url_for('students'))
             
-        # Decrease quantity by 1 when assigned
-        product.quantity -= 1
-        
-        # Mark as assigned if this was the last item
+        # Decrement quantity
+        product.quantity -= assign_quantity
         if product.quantity == 0:
             product.is_assigned = True
+            
+        # 3. Process Dates (Admin Input or Default)
+        now = datetime.utcnow()
+        due_date_str = request.form.get('dueDate') if not request.is_json else data.get('due_date')
         
-        # Create a new assignment record
+        try:
+            if due_date_str:
+                due = datetime.strptime(due_date_str, '%Y-%m-%d')
+            else:
+                due = now + timedelta(days=7) # Default fallback
+        except (ValueError, TypeError):
+            due = now + timedelta(days=7)
+            
+        # 4. Finalize Database Record
         assignment = ProductAssignment(
             product_id=product.id,
             student_id=student.id,
-            assigned_date=datetime.utcnow(),
-            status='assigned'
+            assigned_date=now,
+            due_date=due,
+            status='assigned',
+            quantity=assign_quantity
         )
         
         db.session.add(assignment)
         
-        # Update student's current product
+        # Update student's current product (Legacy support)
         student.product_id = product.id
-        student.assignment_date = datetime.utcnow().date()
-        student.return_date = None
+        student.assignment_date = now.date()
+        student.return_date = due.date()
         
         db.session.commit()
+        
+        # Send SMS Notification to Student
+        if student.phone:
+            sms_body = (
+                f"Hello {student.full_name}, \n"
+                f"Product Assigned: {product.name} (x{assign_quantity})\n"
+                f"Assigned Date: {now.strftime('%Y-%m-%d')}\n"
+                f"Due Date: {due.strftime('%Y-%m-%d')}\n"
+                f"Please ensure it is returned on time."
+            )
+            send_sms(student.phone, sms_body)
         
         # Log the assignment
         log_activity(
@@ -544,8 +671,8 @@ def assign_product(student_id):
                 'remaining_quantity': product.quantity
             })
         else:
-            flash(f'{product.name} assigned to {student.full_name} successfully!', 'success')
-            return redirect(url_for('students'))
+            flash(f'{product.name} (x{assign_quantity}) assigned to {student.full_name} successfully!', 'success')
+            return redirect(url_for('student_history', student_id=student.id))
         
     except Exception as e:
         db.session.rollback()
@@ -564,18 +691,17 @@ def assign_product(student_id):
 def return_product(student_id):
     try:
         student = Student.query.get_or_404(student_id)
+        product_id = request.form.get('productId')
         
-        if not student.product_id:
-            return jsonify({
-                'success': False,
-                'message': 'This student does not have any product assigned.'
-            }), 400
+        if not product_id:
+            # Fallback to old behavior if needed, but better to require ID
+            return jsonify({'success': False, 'message': 'Product ID not specified'}), 400
             
-        product = Product.query.get(student.product_id)
+        product = Product.query.get(product_id)
         
-        # Update assignment status
+        # Update specific assignment status
         assignment = ProductAssignment.query.filter_by(
-            product_id=student.product_id,
+            product_id=product_id,
             student_id=student.id,
             status='assigned'
         ).order_by(ProductAssignment.assigned_date.desc()).first()
@@ -583,10 +709,13 @@ def return_product(student_id):
         if assignment:
             assignment.returned_date = datetime.utcnow()
             assignment.status = 'returned'
+            return_quantity = assignment.quantity
+        else:
+            return_quantity = 1
         
         # Update product quantity
         if product:
-            product.quantity += 1  # Increase quantity when returned
+            product.quantity += return_quantity  # Increase quantity by the amount returned
             if product.quantity > 0:
                 product.is_assigned = False
         
@@ -604,12 +733,16 @@ def return_product(student_id):
             f'Returned {product.name if product else "item"} from {student.full_name} (ID: {student.id})'
         )
         
-        return jsonify({
-            'success': True,
-            'message': f'Product returned successfully from {student.full_name}.',
-            'updated_quantity': product.quantity if product else 0
-        })
-        
+        if request.is_json:
+            return jsonify({
+                'success': True,
+                'message': f'Product returned successfully from {student.full_name}.',
+                'updated_quantity': product.quantity if product else 0
+            })
+        else:
+            flash(f'Product returned successfully from {student.full_name}.', 'success')
+            return redirect(url_for('student_history', student_id=student.id))
+            
     except Exception as e:
         db.session.rollback()
         app.logger.error(f'Error returning product: {str(e)}')
@@ -617,6 +750,120 @@ def return_product(student_id):
             'success': False,
             'message': 'An error occurred while processing the return.'
         }), 500
+
+@app.route('/student/<int:student_id>')
+@login_required
+def student_history(student_id):
+    student = Student.query.get_or_404(student_id)
+    # Get all assignments for this student, ordered by most recent
+    assignments = ProductAssignment.query.filter_by(student_id=student.id).order_by(ProductAssignment.assigned_date.desc()).all()
+    available_products = Product.query.filter(Product.quantity > 0).all()
+    
+    return render_template('student_history.html', 
+                         student=student, 
+                         assignments=assignments,
+                         products=available_products)
+
+@app.route('/notifications/send_overdue_reminders')
+@login_required
+def send_overdue_reminders():
+    """Manual trigger to send SMS reminders to all students with overdue items"""
+    try:
+        now = datetime.utcnow()
+        overdue_assignments = ProductAssignment.query.filter(
+            ProductAssignment.status == 'assigned',
+            ProductAssignment.due_date < now
+        ).all()
+        
+        sent_count = 0
+        for assignment in overdue_assignments:
+            student = assignment.student
+            if student.phone:
+                days_overdue = (now - assignment.due_date).days
+                sms_body = (
+                    f"URGENT: {student.full_name}, your assignment of "
+                    f"{assignment.product.name} (x{assignment.quantity}) was due on "
+                    f"{assignment.due_date.strftime('%Y-%m-%d')}. "
+                    f"It is now {days_overdue} day(s) overdue. Please return it immediately."
+                )
+                if send_sms(student.phone, sms_body):
+                    sent_count += 1
+        
+        flash(f'Successfully sent {sent_count} overdue reminders.', 'success')
+        return redirect(url_for('notifications'))
+    except Exception as e:
+        app.logger.error(f'Error sending reminders: {str(e)}')
+        flash('An error occurred while sending reminders.', 'danger')
+        return redirect(url_for('notifications'))
+@app.route('/notifications')
+@login_required
+def notifications():
+    """Enhanced notification center with all date-related system updates"""
+    notifications = []
+    now = datetime.utcnow()
+    
+    # 1. Low stock notifications
+    low_stock_products = Product.query.filter(Product.quantity <= Product.min_stock_level).all()
+    for product in low_stock_products:
+        notifications.append({
+            'title': 'Low Stock Alert',
+            'message': f'{product.name} is low on stock ({product.quantity} remaining).',
+            'type': 'warning',
+            'created_at': product.created_at or now
+        })
+        
+    # 2. Overdue Assignment notifications
+    overdue = ProductAssignment.query.filter(
+        ProductAssignment.status == 'assigned',
+        ProductAssignment.due_date < now
+    ).all()
+    for assignment in overdue:
+        notifications.append({
+            'title': 'Overdue Item',
+            'message': f'{assignment.student.full_name} has not returned {assignment.product.name} (Due: {assignment.due_date.strftime("%Y-%m-%d")})',
+            'type': 'error',
+            'created_at': assignment.due_date
+        })
+        
+    # 3. Due Soon notifications (Next 48 hours)
+    soon = ProductAssignment.query.filter(
+        ProductAssignment.status == 'assigned',
+        ProductAssignment.due_date >= now,
+        ProductAssignment.due_date <= now + timedelta(hours=48)
+    ).all()
+    for assignment in soon:
+        notifications.append({
+            'title': 'Due Soon',
+            'message': f'{assignment.product.name} assigned to {assignment.student.full_name} is due on {assignment.due_date.strftime("%Y-%m-%d")}',
+            'type': 'info',
+            'created_at': assignment.assigned_date
+        })
+        
+    # 4. Recent activity from last 24 hours (New assignments/returns)
+    recent_activity = ProductAssignment.query.filter(
+        (ProductAssignment.assigned_date >= now - timedelta(hours=24)) |
+        (ProductAssignment.returned_date >= now - timedelta(hours=24))
+    ).all()
+    for activity in recent_activity:
+        if activity.status == 'assigned':
+            notifications.append({
+                'title': 'New Assignment',
+                'message': f'{activity.product.name} (x{activity.quantity}) assigned to {activity.student.full_name}',
+                'type': 'success',
+                'created_at': activity.assigned_date
+            })
+        elif activity.status == 'returned' and activity.returned_date:
+            notifications.append({
+                'title': 'Item Returned',
+                'message': f'{activity.student.full_name} returned {activity.product.name}',
+                'type': 'success',
+                'created_at': activity.returned_date
+            })
+
+    # Sort notifications by date (newest first)
+    notifications.sort(key=lambda x: x['created_at'], reverse=True)
+    
+    return render_template('notifications.html', notifications=notifications)
 
 # Reports
 @app.route('/reports')
@@ -734,31 +981,62 @@ def export_students():
     
     return response
 
-# Notifications
-@app.route('/notifications')
-@login_required
-def notifications():
-    # Get low stock products
-    low_stock_products = Product.query.filter(
-        Product.quantity <= Product.min_stock_level
-    ).all()
-    
-    # Get overdue returns (products assigned for more than 30 days)
-    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-    overdue_assignments = ProductAssignment.query.filter(
-        ProductAssignment.status == 'assigned',
-        ProductAssignment.assigned_date < thirty_days_ago
-    ).all()
-    
-    return render_template('notifications.html',
-                         low_stock_products=low_stock_products,
-                         overdue_assignments=overdue_assignments)
 
 # Settings
 @app.route('/settings')
 @login_required
 def settings():
     return render_template('settings.html')
+
+@app.route('/change_password', methods=['POST'])
+@login_required
+def change_password():
+    """Route to handle password changes"""
+    current_password = request.form.get('current_password')
+    new_password = request.form.get('new_password')
+    confirm_password = request.form.get('confirm_password')
+    
+    print(f"[DEBUG] Password change attempt for user_id: {session.get('user_id')}")
+    
+    # 1. Basic validation
+    if not current_password or not new_password or not confirm_password:
+        flash('All fields are required to update your security credentials.', 'danger')
+        return redirect(url_for('settings', tab='user'))
+        
+    if new_password != confirm_password:
+        flash('Password mismatch: The new password and confirmation do not match.', 'danger')
+        return redirect(url_for('settings', tab='user'))
+    
+    # 2. Get current user (Using modern SQLAlchemy get method)
+    user_id = session.get('user_id')
+    user = db.session.get(User, user_id)
+    
+    if not user:
+        print(f"[ERROR] User not found during password change. user_id: {user_id}")
+        flash('Session invalid. Please log in again.', 'danger')
+        return redirect(url_for('logout'))
+    
+    # 3. Verify current password
+    if not user.check_password(current_password):
+        print(f"[ERROR] Incorrect current password for user: {user.username}")
+        flash('Authorization failed: Incorrect current password.', 'danger')
+        return redirect(url_for('settings', tab='user'))
+        
+    try:
+        # 4. Apply new password
+        user.set_password(new_password)
+        db.session.commit()
+        print(f"[SUCCESS] Password updated for user: {user.username}")
+        
+        # 5. Log activity and redirect
+        log_activity(user_id, 'change_password', f'User {user.username} successfully updated their access key')
+        flash('Security upgrade complete: Your password has been successfully updated.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        print(f"[FATAL] Error updating password: {str(e)}")
+        flash('A system error occurred. Password change failed.', 'danger')
+        
+    return redirect(url_for('settings', tab='user'))
 
 # Activity Logs
 @app.route('/activity_logs')

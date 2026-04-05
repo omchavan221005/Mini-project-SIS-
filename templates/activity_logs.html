@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}System Audit Logs | SIS Core{% endblock %}
+
+{% block header_title %}Operational Activity History{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <div class="flex items-center justify-between">
+        <div>
+            <h3 class="text-2xl font-black text-slate-800">Operational Log Matrix</h3>
+            <p class="text-sm text-slate-400 font-medium">Full historical record of all administrative and system events.</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span class="text-xs font-bold text-slate-400 uppercase tracking-widest px-3 py-1 bg-white border border-slate-200 rounded-full">Filter Active</span>
+        </div>
+    </div>
+
+    <!-- Table of Logs -->
+    <div class="card-modern overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead class="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                        <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Time Vector</th>
+                        <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Operator Identity</th>
+                        <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Action Code</th>
+                        <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Event Details</th>
+                        <th class="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Source IP</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% for log in logs.items %}
+                    <tr class="hover:bg-slate-50 transition-colors">
+                        <td class="px-8 py-4">
+                            <span class="text-xs font-bold text-indigo-600 block">{{ log.timestamp.strftime('%H:%M:%S') }}</span>
+                            <span class="text-[9px] font-black text-slate-400 uppercase">{{ log.timestamp.strftime('%d %b %Y') }}</span>
+                        </td>
+                        <td class="px-8 py-4">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                <span class="text-sm font-black text-slate-800 italic">{{ log.user.username if log.user else 'CORE_SYSTEM' }}</span>
+                            </div>
+                        </td>
+                        <td class="px-8 py-4">
+                            <span class="px-2 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-black rounded uppercase tracking-tighter">{{ log.action }}</span>
+                        </td>
+                        <td class="px-8 py-4">
+                            <p class="text-xs text-slate-500 max-w-lg leading-relaxed">{{ log.details or '-' }}</p>
+                        </td>
+                        <td class="px-8 py-4 text-xs font-bold text-slate-400 font-mono tracking-tighter">
+                            {{ log.ip_address or '0.0.0.0' }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        <div class="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-widest">Page {{ logs.page }} of {{ logs.pages }}</p>
+            <div class="flex gap-2">
+                {% if logs.has_prev %}
+                <a href="{{ url_for('activity_logs', page=logs.prev_num) }}" class="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-black text-indigo-600 shadow-sm hover:bg-slate-50 transition-all">Prev</a>
+                {% endif %}
+                {% if logs.has_next %}
+                <a href="{{ url_for('activity_logs', page=logs.next_num) }}" class="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-black text-indigo-600 shadow-sm hover:bg-slate-50 transition-all">Next</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
