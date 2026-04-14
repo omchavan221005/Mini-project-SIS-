@@ -1,4 +1,4 @@
-# Store Inventory Management System
+# CampusKart
 
 A Flask-based web application for managing inventory and tracking product assignments to students.
 
@@ -92,7 +92,7 @@ A Flask-based web application for managing inventory and tracking product assign
 ## Project Structure
 
 ```
-store-inventory-system/
+campuskart/
 ├── app.py                  # Main application file
 ├── models.py               # Database models
 ├── init_db.py              # Database initialization script

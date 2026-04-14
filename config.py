@@ -27,7 +27,7 @@ class Config:
     
     # Logging
     LOG_TO_STDOUT = os.environ.get('LOG_TO_STDOUT')
-    LOG_FILE = 'logs/inventory.log'
+    LOG_FILE = 'logs/campuskart.log'
     LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
     
     # Email (configure these in production)
@@ -77,7 +77,7 @@ class ProductionConfig(Config):
         file_handler.setLevel(logging.INFO)
         app.logger.addHandler(file_handler)
         app.logger.setLevel(logging.INFO)
-        app.logger.info('Inventory System Startup')
+        app.logger.info('CampusKart Startup')
 
 # Configuration dictionary
 config = {

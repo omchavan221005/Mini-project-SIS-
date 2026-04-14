@@ -39,7 +39,13 @@ if database_url and database_url.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///inventory.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
-app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+
+# File Uploads - Use /tmp on Vercel as only that is writable
+if os.environ.get('VERCEL'):
+    app.config['UPLOAD_FOLDER'] = '/tmp/uploads'
+else:
+    app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
 
 # Ensure upload folder exists
@@ -100,15 +106,42 @@ def send_email(subject, recipient, body):
 
 # Configure logging
 if not app.debug:
-    if not os.path.exists('logs'):
-        os.mkdir('logs')
-    file_handler = RotatingFileHandler('logs/inventory.log', maxBytes=10240, backupCount=10)
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
-    file_handler.setLevel(logging.INFO)
-    app.logger.addHandler(file_handler)
+    # On Vercel or production, log to stdout rather than a file
+    if os.environ.get('VERCEL') or os.environ.get('LOG_TO_STDOUT'):
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(logging.Formatter(
+            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
+        stream_handler.setLevel(logging.INFO)
+        app.logger.addHandler(stream_handler)
+    else:
+        if not os.path.exists('logs'):
+            os.mkdir('logs')
+        file_handler = RotatingFileHandler('logs/campuskart.log', maxBytes=10240, backupCount=10)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
+        file_handler.setLevel(logging.INFO)
+        app.logger.addHandler(file_handler)
+    
     app.logger.setLevel(logging.INFO)
-    app.logger.info('Inventory System Startup')
+    app.logger.info('CampusKart Startup')
+
+# Initialize database tables
+with app.app_context():
+    try:
+        db.create_all()
+        app.logger.info('Database tables verified/created.')
+        
+        # Create admin user if not exists
+        admin = User.query.filter_by(username='admin').first()
+        if not admin:
+            admin_password = os.environ.get('ADMIN_PASSWORD', 'admin')
+            admin = User(username='admin', is_admin=True)
+            admin.set_password(admin_password)
+            db.session.add(admin)
+            db.session.commit()
+            app.logger.info(f'Created admin user with username: admin')
+    except Exception as e:
+        app.logger.error(f'Database initialization error: {str(e)}')
 
 # Database Models
 class User(db.Model):
@@ -1319,20 +1352,5 @@ def internal_server_error(e):
     app.logger.error(f'500 Error: {str(e)}')
     return render_template('500.html'), 500
 
-# Initialize database
-def init_db():
-    with app.app_context():
-        db.create_all()
-        
-        # Create admin user if not exists
-        admin = User.query.filter_by(username='admin').first()
-        if not admin:
-            admin = User(username='admin', is_admin=True)
-            admin.set_password('admin')
-            db.session.add(admin)
-            db.session.commit()
-            print('Created admin user with username: admin, password: admin')
-
 if __name__ == '__main__':
-    init_db()
     app.run(debug=True)
